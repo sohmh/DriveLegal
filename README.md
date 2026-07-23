@@ -2,7 +2,7 @@
 
 DriveLegal is a local-first FastAPI and HTML/Streamlit application for authenticated Indian traffic-law Q&A, GPS-aware retrieval, challan estimation, and driver dashboard history.
 
-## 1. Project Title & One-Line Description
+## 1. Project Title and One-Line Description
 
 DriveLegal is a location-aware road-safety assistant for Indian drivers that combines a FastAPI backend, local Qdrant retrieval, Ollama/Mistral generation, SQLite persistence, and an HTML dashboard.
 
