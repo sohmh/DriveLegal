@@ -44,6 +44,182 @@ Major components:
 | `scripts/preprocess.py` | Reads `.txt`, `.md`, `.pdf`, and `.csv` files from `data/raw`, extracts/cleans text, chunks it, infers `region`, `category`, and `law_section` metadata, and writes `data/processed/chunks.json`. |
 | `scripts/migrate_to_qdrant.py` | Embeds processed chunks and recreates the embedded Qdrant collection `drivelegal_chunks` under `data/qdrant_db`. Stores chunk text plus metadata payloads used by exact `region` filters. |
 
+### Use-Case Diagram
+
+```mermaid
+flowchart LR
+    driver[Driver]
+    operator[Operator]
+    mail[SMTP service]
+
+    subgraph DriveLegal[DriveLegal]
+        login([Sign in with email OTP])
+        ask([Ask traffic-law question])
+        choose([Select jurisdiction manually])
+        gps([Share current GPS location])
+        view([View dashboard and chat history])
+        verify([Link driver-license profile])
+        ingest([Process and index legal sources])
+    end
+
+    driver --> login
+    driver --> ask
+    driver --> choose
+    driver --> gps
+    driver --> view
+    driver --> verify
+    login -. sends OTP .-> mail
+    operator --> ingest
+```
+
+### Sequence Diagram: Location-Aware Chat
+
+```mermaid
+sequenceDiagram
+    actor Driver
+    participant UI as Browser UI
+    participant API as FastAPI /chat
+    participant GPS as GPS Store
+    participant RAG as RAG Chain
+    participant Q as Embedded Qdrant
+    participant LLM as Ollama / Mistral
+    participant Fine as Fine Lookup
+    participant DB as SQLite
+
+    Driver->>UI: Ask question and choose location
+    UI->>API: POST /chat with message, location, bearer token
+    API->>GPS: Read latest fresh GPS fix
+    GPS-->>API: Resolved location or no fresh fix
+    Note over API: Fresh GPS takes precedence over manual location;
+    Note over API: a destination country in the query can override country scope
+    API->>RAG: get_answer(query, effective location)
+    RAG->>Q: Embed query and retrieve jurisdiction-filtered chunks
+    Q-->>RAG: Relevant law chunks and scores
+    RAG->>LLM: Generate grounded answer with retrieved context
+    LLM-->>RAG: Answer
+    opt LLM unavailable
+        RAG->>Q: Use retrieval fallback (then cache if needed)
+        Q-->>RAG: Fallback content
+    end
+    RAG-->>API: Answer, sources, score, fallback status
+    API->>Fine: Find structured fine for query and jurisdiction
+    Fine-->>API: Fine and currency details, if matched
+    opt Valid user context available
+        API->>DB: Save user and bot chat messages
+        DB-->>API: Commit result
+    end
+    API-->>UI: Answer, sources, fine, confidence
+    UI-->>Driver: Display response
+```
+
+### Class Diagram
+
+```mermaid
+classDiagram
+    class UserDB {
+        +int id
+        +string email
+        +bool is_verified
+        +string dl_number
+        +string official_name
+        +int safety_score
+        +int safe_days_streak
+        +string badges
+    }
+    class ViolationDB {
+        +int id
+        +int user_id
+        +string offence
+        +int fine_amount
+        +string status
+        +string location
+        +string timestamp
+    }
+    class ChatMessageDB {
+        +int id
+        +int user_id
+        +string sender
+        +string message
+        +string fine_amount
+        +string location_tag
+        +datetime timestamp
+    }
+    class Location {
+        +string city
+        +string state
+        +string country
+    }
+    class ChatRequest {
+        +string message
+        +Location location
+    }
+    class ChatResponse {
+        +string answer
+        +string fine_amount
+        +Source[] sources
+        +bool offline_fallback
+        +ConfidenceDetail confidence
+    }
+    class Source {
+        +string law_section
+        +string category
+        +string region
+        +string text_snippet
+    }
+    class ConfidenceDetail {
+        +ConfidenceLevel level
+        +float retrieval_score
+        +bool fine_from_structured_data
+        +bool is_offline_fallback
+    }
+
+    UserDB "1" --> "0..*" ViolationDB : owns
+    UserDB "1" --> "0..*" ChatMessageDB : owns
+    ChatRequest *-- Location : contains
+    ChatResponse "1" --> "0..*" Source : cites
+    ChatResponse --> ConfidenceDetail : reports
+```
+
+### Component Diagram
+
+```mermaid
+flowchart TB
+    browser[Browser: frontend/ui.html]
+    streamlit[Streamlit wrapper: frontend/app.py]
+    api[FastAPI application: app/main.py]
+    auth[Authentication: app/auth.py]
+    routes[Chat, location, and profile routers]
+    geo[Offline geocoder]
+    chain[RAG chain]
+    retriever[Jurisdiction-aware retriever]
+    challan[Structured fine lookup]
+    db[(SQLite: users, violations, chat history)]
+    qdrant[(Embedded Qdrant: law chunks)]
+    fines[(data/fines.json)]
+    cache[(data/cache.json)]
+    ollama[Local Ollama: Mistral]
+    smtp[SMTP server]
+    prep[Corpus preprocessing and indexing scripts]
+    sources[Legal source files]
+
+    streamlit -. embeds .-> browser
+    browser -->|HTTP API calls| api
+    api --> auth
+    api --> routes
+    routes --> db
+    routes --> geo
+    routes --> chain
+    routes --> challan
+    auth --> smtp
+    chain --> retriever
+    retriever --> qdrant
+    chain --> ollama
+    chain -. offline fallback .-> cache
+    challan --> fines
+    sources --> prep
+    prep -->|processed chunks and embeddings| qdrant
+```
+
 ## 4. Use-Case Workflow
 
 ### Email OTP login and dashboard bootstrap

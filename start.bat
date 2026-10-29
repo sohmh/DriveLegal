@@ -33,7 +33,17 @@ start "DriveLegal Frontend" cmd /k "venv\Scripts\activate && streamlit run front
 
 :: Wait 2 seconds then open browser
 timeout /t 2 /nobreak >nul
-start http://localhost:8501
+set "CHROME_PATH="
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME_PATH=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+if not defined CHROME_PATH if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" set "CHROME_PATH=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+if not defined CHROME_PATH if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME_PATH=%LocalAppData%\Google\Chrome\Application\chrome.exe"
+if defined CHROME_PATH (
+    echo Opening Chrome...
+    start "" "%CHROME_PATH%" "http://localhost:8501"
+) else (
+    echo Chrome not found, opening default browser...
+    start "" "http://localhost:8501"
+)
 
 echo.
 echo ============================================

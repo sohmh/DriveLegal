@@ -13,6 +13,10 @@ __pycache__/
 data/qdrant_db/
 qdrant_db/
 
+# Raw source data (keep the directory placeholder; already tracked files remain tracked)
+data/raw/*
+!data/raw/.gitkeep
+
 # HuggingFace model cache
 *.bin
 *.pt
