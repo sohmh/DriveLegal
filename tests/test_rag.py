@@ -111,6 +111,7 @@ def test_retrieve_uses_full_jurisdiction_fallback_order(mock_embedder, mock_clie
         "India",
         "National",
         "Vienna Convention on Road Traffic",
+        "UN Model Road Safety Legislation",
         "",
     ]
     actual_scopes = [call.args[0] for call in mock_build_filter.call_args_list]

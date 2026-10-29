@@ -137,15 +137,17 @@ def retrieve(
     
     # Implement fallback cascade: city -> state/province -> country -> regional bloc -> international convention -> no filter
     scopes = get_retriever_scopes(city, state, country)
-    accumulated_results = []
+    scored_results = []
     seen_ids = set()
     top_score: float = 0.0   # cosine similarity of the best hit across all cascade levels
     
-    for scope in scopes:
+    if "" not in scopes:
+        scopes.append("")
+
+    for scope_rank, scope in enumerate(scopes):
         # Build filter for this scope
         region_filter = _build_region_filter(scope)
         scope_label = f"'{scope}'" if scope else "NO FILTER"
-        is_treaty_scope = scope in _TREATY_SCOPES
 
         # Search with filter using query_points() (correct method for vector search)
         query_response = _client.query_points(
@@ -159,12 +161,11 @@ def retrieve(
 
         logger.debug(
             f"Scope {scope_label}: found {len(query_response.points)} results "
-            f"(accumulated: {len(accumulated_results)})"
+            f"(accumulated: {len(scored_results)})"
         )
 
-        # Capture the top similarity score from the very first result across all levels
-        if query_response.points and top_score == 0.0:
-            top_score = float(query_response.points[0].score)
+        if query_response.points:
+            top_score = max(top_score, float(query_response.points[0].score))
 
         # Convert results to Document objects, deduplicating by ID
         for scored_point in query_response.points:
@@ -179,18 +180,14 @@ def retrieve(
                         "corpus_tier": payload.get("corpus_tier", ""),  # NEW
                     },
                 )
-                accumulated_results.append(doc)
+                scored_results.append((float(scored_point.score), scope_rank, doc))
                 seen_ids.add(scored_point.id)
 
-        # Treaty scopes always run to completion — never break early.
-        # Non-treaty scopes stop once we have enough results.
-        if not is_treaty_scope and len(accumulated_results) >= k:
-            logger.debug(f"Stopping cascade at scope {scope_label}")
-            break
+    scored_results.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    accumulated_results = [doc for _, _, doc in scored_results]
 
     logger.info(
         f"retrieve() returning {len(accumulated_results)} docs for query: {query[:50]}"
         f" | top_score={top_score:.3f}"
     )
-    # Sort treaty chunks to the front, then return exactly k results
-    return _sort_treaty_first(accumulated_results)[:k], top_score
+    return accumulated_results[:k], top_score
