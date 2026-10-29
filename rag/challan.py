@@ -5,6 +5,7 @@ This is intentionally NOT LLM-based — accuracy is guaranteed via data.
 """
 
 import json
+import csv
 import logging
 import os
 import re
@@ -15,6 +16,7 @@ from rag.jurisdiction import get_fine_lookup_scopes
 logger = logging.getLogger("drivelegal.challan")
 
 FINES_PATH = os.path.join("data", "fines.json")
+VIOLATIONS_PATH = os.path.join("data", "raw", "Indian_Traffic_Violations.csv")
 
 CURRENCY_SYMBOLS = {
     "INR": "₹",
@@ -84,6 +86,63 @@ def _detect_vehicle(query: str) -> str:
         if any(kw in q for kw in keywords):
             return vehicle
     return "default"   # generic fallback
+
+
+def lookup_violation_records(
+    query: str,
+    state: str = "",
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """Return matching structured violation records for answer grounding."""
+    violation = _detect_violation(query)
+    if not violation or not os.path.exists(VIOLATIONS_PATH):
+        return []
+
+    violation_names = {
+        "red_light": "signal jumping",
+        "speeding": "overspeeding",
+        "no_helmet": "helmet",
+        "no_seatbelt": "seatbelt",
+        "drunk_driving": "drunk driving",
+    }
+    target = violation_names.get(violation, violation.replace("_", " "))
+    target_state = state.strip().lower()
+    matches = []
+
+    with open(VIOLATIONS_PATH, newline="", encoding="utf-8", errors="ignore") as file:
+        for row in csv.DictReader(file):
+            row_violation = row.get("Violation_Type", "").strip().lower()
+            row_state = row.get("Registration_State", "").strip().lower()
+            if target not in row_violation:
+                continue
+            if target_state and row_state != target_state:
+                continue
+            matches.append(row)
+
+    prefers_two_wheeler = any(
+        term in query.lower()
+        for term in ("riding", "two wheeler", "two-wheeler", "bike", "motorcycle")
+    )
+
+    def rank(row: dict[str, str]) -> tuple[bool, bool, int]:
+        vehicle_text = " ".join(
+            (row.get("Vehicle_Type", ""), row.get("License_Type", ""))
+        ).lower()
+        two_wheeler_match = any(
+            term in vehicle_text for term in ("bike", "motorcycle", "scooter", "two-wheeler")
+        )
+        return (
+            row.get("Comments", "").strip().lower() == "repeat offender",
+            prefers_two_wheeler and two_wheeler_match,
+            int(row.get("Fine_Amount", "0") or 0),
+        )
+
+    matches.sort(key=rank, reverse=True)
+    fields = (
+        "Violation_ID", "Violation_Type", "Fine_Amount", "Location",
+        "Vehicle_Type", "License_Type", "Previous_Violations", "Comments",
+    )
+    return [{field: row.get(field, "") for field in fields} for row in matches[:limit]]
 
 
 def _normalize_country(country: Optional[str]) -> str:

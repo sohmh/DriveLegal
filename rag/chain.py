@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 from langchain_community.chat_models import ChatOllama
 from langchain.prompts import PromptTemplate
+from rag.challan import lookup_violation_records
 from rag.retriever import retrieve
 
 logger = logging.getLogger("drivelegal.chain")
@@ -89,13 +90,24 @@ def _normalize(text: str) -> str:
     return text
 
 
-def _offline_fallback(query: str) -> Dict[str, Any]:
+def _offline_fallback(
+    query: str,
+    city: str = "",
+    state: str = "",
+    country: str = "India",
+) -> Dict[str, Any]:
     """Fallback logic: Search Qdrant directly. Use cache only if Qdrant fails."""
     normalized_query = _normalize(query)
 
     # First resort: search Qdrant directly in offline mode
     try:
-        docs, top_score = retrieve(normalized_query, k=3)
+        docs, top_score = retrieve(
+            normalized_query,
+            k=3,
+            city=city,
+            state=state,
+            country=country,
+        )
         if docs:
             return {
                 "answer": (
@@ -173,7 +185,6 @@ def get_answer(
                 "top_retrieval_score": top_score,
             }
 
-        # Tag each context block with its tier so the LLM can cite the source layer
         context = "\n\n".join(
             "[{tier} | {region} | {section}]\n{text}".format(
                 tier=(d.metadata.get("corpus_tier") or "regional").upper(),
@@ -183,6 +194,17 @@ def get_answer(
             )
             for d in docs
         )
+
+        records = lookup_violation_records(query, state=state)
+        if records:
+            record_context = "\n".join(
+                " | ".join(f"{key}: {value}" for key, value in record.items() if value)
+                for record in records
+            )
+            context += (
+                "\n\n[STRUCTURED DATASET RECORDS | use exact values]\n"
+                + record_context
+            )
 
         llm = ChatOllama(model="mistral", temperature=0)
         prompt = QA_PROMPT.format(
@@ -201,4 +223,4 @@ def get_answer(
 
     except Exception as exc:
         logger.warning(f"LLM unavailable, using offline fallback. Reason: {exc}")
-        return _offline_fallback(query)
+        return _offline_fallback(query, city=city, state=state, country=country)
