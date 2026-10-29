@@ -34,3 +34,4 @@ Thumbs.db
 
 #qdrant .lock file
 *.lock
+.env
